@@ -1,4 +1,7 @@
 
+#include <AMReX_VisMF.H>
+#include <AMReX_MultiFab.H>
+
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -280,13 +283,57 @@ void read_amrex_subdomain (double* a, int const* lo, int const* hi)
 	    std::free(p);
 	}
     }
-}
 
-void get_subdomain_offset (int* offset)
-{
-    offset[0] = subdomain_offset[0];
-    offset[1] = subdomain_offset[1];
-    offset[2] = subdomain_offset[2];
+    amrex::MultiFab foo;
+    amrex::VisMF::Read(foo, "my_subvol00006/Level_0/Cell");
+    amrex::BoxArray ba(foo.boxArray().minimalBox());
+    amrex::MultiFab bar(ba, amrex::DistributionMapping(ba), foo.nComp(), 0);
+    bar.ParallelCopy(foo);
+    auto const& cfab = bar.const_array(0);
+
+    amrex::Print() << "xxxxxx subdomain_offset: " << subdomain_offset[0]
+		   << " " << subdomain_offset[1] << " " << subdomain_offset[2] << std::endl;
+    amrex::Print() << "xxxxx lo: " << lo[0] << " " << lo[1] << " " << lo[2] << std::endl;
+    amrex::Print() << "xxxxx hi: " << hi[0] << " " << hi[1] << " " << hi[2] << std::endl;
+
+    amrex::BaseFab<amrex::GpuArray<double,3>>
+	fab(amrex::Box(amrex::IntVect(lo[0]+subdomain_offset[0],
+				      lo[1]+subdomain_offset[1],
+				      lo[2]+subdomain_offset[2]),
+		       amrex::IntVect(hi[0]+subdomain_offset[0],
+				      hi[1]+subdomain_offset[1],
+				      hi[2]+subdomain_offset[2])),
+	    1, (amrex::GpuArray<double,3>*)a);
+
+    amrex::Print() << "boxes: " << fab.box() << ", " << amrex::Box(cfab) << std::endl;
+    amrex::Print() << "a[..]: " << a[0] << " " << a[1] << " " << a[2] << std::endl;
+    amrex::Print() << "size of " << sizeof(amrex::GpuArray<double,3>) << " align: " << alignof(amrex::GpuArray<double,3>)  << std::endl;
+    amrex::Print() << "fab.nComp() = " << fab.nComp() << std::endl;
+
+    auto const& b = fab(fab.box().smallEnd(),0);
+    amrex::Print() << "b: " << b[0] << " " << b[1] << " " << b[2]
+		   << " b.smallEnd() = " << fab.box().smallEnd() << std::endl;
+
+    double err = 0;
+    amrex::Loop(fab.box(), [&] (int i, int j, int k)
+    {
+	auto e = std::max({std::abs(cfab(i,j,k,0) - fab(amrex::IntVect(i,j,k))[0]),
+		           std::abs(cfab(i,j,k,1) - fab(amrex::IntVect(i,j,k))[1]),
+		           std::abs(cfab(i,j,k,2) - fab(amrex::IntVect(i,j,k))[2])});
+
+	if (e > 1.e-15) {
+	    amrex::Print() << "xxxxx i = " << i << ", j = " << j << ", k = " << k
+			   << " " << cfab(i,j,k,0)
+			   << " " << cfab(i,j,k,1)
+			   << " " << cfab(i,j,k,2)
+			   << " " << fab(amrex::IntVect(i,j,k))[0]
+			   << " " << fab(amrex::IntVect(i,j,k))[1]
+			   << " " << fab(amrex::IntVect(i,j,k))[2]
+			   << std::endl;
+	}
+	err = std::max(e,err);
+    });
+    amrex::Print() << "xxxxx err = " << err << std::endl;
 }
 
 }
